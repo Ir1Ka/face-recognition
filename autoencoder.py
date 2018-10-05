@@ -4,10 +4,32 @@
 '''
 Auto Encoder Neural Networks
 '''
+
+__author__ = 'IriKa'
+
 import numpy as np
 import tensorflow as tf
-# 用于显示图像
-from matplotlib import pyplot as plt
-from PIL import Image
 import os
+# For display
+from matplotlib import pyplot as plt
+
+class autoencoder:
+    '''
+    A NN AutoEncoder.
+    '''
+    def __init__(self, in_data):
+        pass
+
+    def __encoder(self):
+        pass
+
+    def __decoder(self):
+        pass
+
+    def get_encoded(self):
+        pass
+
+    def get_decoded(self):
+        pass
+
 

@@ -4,6 +4,9 @@
 '''
 Image data preprocessing using TensorFlow
 '''
+
+__author__ = 'IriKa'
+
 import tensorflow as tf
 # *NOTE*: Some OP does not run on GPU and only intead of CPU.
 # Therefore, we need config `allow_soft_placement=True` to `tf.Session()`.
@@ -31,10 +34,10 @@ class preprocessing_for_image:
         self.out_size = out_size
         #print('in_size', self.in_size)
         #print('out_size', self.out_size)
-        self.gen_placeholder()
-        self.hyperparameter()
+        self.__gen_placeholder()
+        self.__hyperparameter()
  
-    def gen_placeholder(self):
+    def __gen_placeholder(self):
         '''
         Generate some Place Holder for preprocessing.
         '''
@@ -42,7 +45,7 @@ class preprocessing_for_image:
         self.rotate_angles_ph = tf.placeholder(dtype=tf.float32, shape=(None,), name='rotate_angles')
         #self.color_ordering_ph = tf.placeholder(dtype=tf.uint8, shape=(0,), name='color_ordering')
 
-    def hyperparameter(self):
+    def __hyperparameter(self):
         '''
         Define some hyperparameter.
         '''
@@ -143,7 +146,7 @@ def main(face_data):
             '''
             print('type:', type(preprocessed), 'dtype:', preprocessed.dtype, 'shape', preprocessed.shape, end='\n\n')
 
-if __name__ is '__main__':
+if __name__ == '__main__':
     # Test it
     import numpy as np
     import matplotlib.pylab as plt

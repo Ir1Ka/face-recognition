@@ -4,6 +4,9 @@
 '''
 Batch generator for CASIA-WebFace.
 '''
+
+__author__ = 'IriKa'
+
 import numpy as np
 from PIL import Image
 import os
@@ -93,5 +96,5 @@ def main():
         #print(person_names)
         #print(batch)
 
-if __name__ is '__main__':
+if __name__ == '__main__':
     main()
