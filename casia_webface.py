@@ -91,10 +91,10 @@ class casia_webface:
 def main():
     with casia_webface() as face_data:
         for i in range(10):
-        batch, person_names = face_data.next_batch(10)
-        print(type(batch), 'shape', batch.shape)
-        #print(person_names)
-        #print(batch)
+            batch, person_names = face_data.next_batch(10)
+            print(type(batch), 'shape', batch.shape)
+            #print(person_names)
+            #print(batch)
 
 if __name__ == '__main__':
     main()
