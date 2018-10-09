@@ -50,7 +50,8 @@ class preprocessing_for_image:
         Define some hyperparameter.
         '''
         self.JPEG_QUALITY = (80, 100)
-        self.BRIGHTNESS = 16./255.
+        # The value of `BRIGHTNESS` from cifar10.
+        self.BRIGHTNESS = 63
         self.SATURATION = (0.5, 1.5)
         self.HUE = 0.2
         self.CONTRAST = (0.5, 1.5)
@@ -83,16 +84,6 @@ class preprocessing_for_image:
         imgs = tf.image.random_contrast(imgs, lower=self.CONTRAST[0], upper=self.CONTRAST[1])
         return imgs
 
-    def data_standardization(self, imgs):
-        '''
-        ** NOTE: the `imgs.dtype` must be about `tf.float`.
-        * Remove the DC component.
-        * Adjust the variance to 1.
-        '''
-        mean = tf.reduce_mean(imgs, axis=(1,2), keepdims=True)
-        std = tf.keras.backend.std(imgs, axis=(1,2), keepdims=True)
-        return (imgs - mean) / std
-
     def get_placeholder(self):
         '''
         Get the generated Place Holder.
@@ -109,7 +100,7 @@ class preprocessing_for_image:
         train_fn = lambda: self.distort_color(self.image_transformation(imgs))
         test_fn = lambda : imgs
         imgs = tf.case([(tf.equal(self.is_train_ph, True), train_fn)], default=test_fn)
-        imgs = self.data_standardization(imgs)
+        imgs = tf.image.per_image_standardization(imgs)
         return imgs
 
 def main(face_data):
