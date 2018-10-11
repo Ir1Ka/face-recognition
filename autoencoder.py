@@ -29,6 +29,8 @@ class stack_autoencoder:
             raise ValueError('The last 3-D shape must be known and cannot be None.')
         if len(hidden_outputs) != layer_num:
             raise ValueError('The length of the hidden_outputs must be equal layer_num.')
+
+        self.scope_name = 'stack_autoencoder'
         self.in_data = in_data
         self.in_shape = self.in_data.shape
         self.layer_num = layer_num
@@ -101,6 +103,32 @@ class stack_autoencoder:
         return layers[-1]
 
     def gen_model(self, filter_sizes=[3, 3]):
+        '''A wrapper that generates the model function.
+
+        Args:
+            filter_sizes:   The sizes of the convolution kernel. The default if `[3, 3]`, but you can also customiz it.
+                You can only provide one size so that all convolution kernel use the same size.
+                Well, you can provide size for each layer of convolution kernel.
+                *NOTE*: The convolution kernel of the encoder and decoder of the corresponding layer will use the same size.
+
+        Returns:
+            The final decoder output.
+            Well, the output of the hidden layer will also be stored.
+        '''
+        with tf.variable_scope(self.scope_name) as scope:
+            return self.__gen_model(filter_sizes)
+
+    def __gen_model(self, filter_sizes):
+        '''A generates the model function.
+
+        Args:
+            filter_sizes:   The sizes of the convolution kernel.
+                See the `stack_autoencoder.gen_model` for more information.
+
+        Returns:
+            The final decoder output.
+            Well, the output of the hidden layer will also be stored.
+        '''
         if len(filter_sizes) != 1 or len(filter_sizes) != self.layer_num:
             raise ValueError('The length of filter_sizes must be equal 1 or layer_num.')
         self.layer_train_ph = tf.placeholder(name='layer_train', shape=(), dtype=tf.uint8)
@@ -110,31 +138,32 @@ class stack_autoencoder:
         size_each_hidden = [self.in_shape[-3:-1]]
         layers = [self.in_data]
 
+        # All of the encode outputs will store here.
+        self.encoded = [self.in_data]
+
         # Encode
-        with tf.variable_scope('encode') as scope:
+        with tf.variable_scope('encoder') as scope:
             for i in range(self.layer_num):
-                name = 'encode_%d' % i+1
+                name = 'hidden_%d' % i+1
                 filter = filter_sizes[i] + layers[-1].shape[-1:] + [self.hidden_outputs[i+1]]
                 layer = layers[-1]
                 if i != 0:
-                    include_fn = lambda: layers[-1]
+                    include_fn = lambda var=layers[-1]: var
                     exclude_fn = lambda: zero_constant
                     layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
                 hidden = codec(layer, filter, True, name=name)
                 size_each_hidden.append(hidden.shape[-3:-1])
                 layers.append(hidden)
-
-        # Here is encode output.
-        self.encoded = layers[-1]
+                self.encoded.append(hidden)
 
         # Decode
-        with tf.variable_scope('decode') as scope:
+        with tf.variable_scope('decoder') as scope:
             for i in range(self.layer_num-1, -1, -1):
-                name = 'decode_%d' % i+1
+                name = 'hidden_%d' % i+1
                 filter = filter_sizes[i] + layers[-1].shape[-1:] + [self.hidden_outputs[i]]
                 layer = layers[-1]
                 if i != 0:
-                    include_fn = lambda: layers[-1]
+                    include_fn = lambda var=layers[-1]: var
                     exclude_fn = lambda: layers[i]
                     layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
                 hidden = codec(layer, filter, False, name=name, new_size=size_each_hidden[i])
@@ -145,13 +174,55 @@ class stack_autoencoder:
         return self.decoded
 
     def get_ph(self):
+        ''' Get placeholder of the Stack AutoEncoder.
+        '''
         return self.layer_train_ph
 
-    def get_encoded(self):
-        return self.encoded
+    def get_encoded(self, index=None):
+        ''' Get encoded output of the AutoEncoder.
+
+        The hidden layer coded output can be used to make sparse penalties during network training.
+        Or visualize.
+
+        Args:
+            index:  A `int`. The default is equal to `layer_num`. `0` means to get input of the AutoEncoder.
+                The value must be less than `layer_num`.
+
+        Raises:
+            ValueError: If `index` is greater than `layer_num`.
+        '''
+        if index > self.layer_num:
+            raise ValueError('The index must be less than the layer_num.')
+
+        if index is None:
+            index = self.layer_num
+        return self.encoded[index]
 
     def get_decoded(self):
+        ''' Get decoded output of the Stack AutoEncoder.
+        '''
         return self.decoded
+
+    def get_variable_for_layer(self, index, trainable=None):
+        ''' Get variable of the Stack AutoEncoder.
+
+        Get the variables of the specified layer, which is convenient for Stack AutoEncoder training.
+
+        Args:
+            index:      A `int`. Specifies which layer of variables to retrieve,
+                including the corresponding encoder layer and decoder layer.
+            trainable:  A `bool`. Indicates whether it is a trainingable variable. The `True` and default are trainable.
+        '''
+        var_list = []
+        hidden_name = 'encoder/hidden_%d' % index, 'decoder/hidden_%d' % index
+        if trainable is True or trainable is None:
+            all_vars = tf.trainable_variables(scope=self.scope_name)
+        else:
+            all_vars = tf.global_variables(scope=self.scope_name)
+        for var in all_vars:
+            if (hidden_name[0] in var.name) or (hidden_name[1] in var.name):
+                var_list.append(var)
+        return var_list
 
 def main():
     pass

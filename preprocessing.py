@@ -13,20 +13,21 @@ import tensorflow as tf
 # It will be able to make the OP running on the GPU not supported and automatically run on the CPU.
 
 class preprocessing_for_image:
-    '''
-    We assume that the entire image is a human face.
+    '''We assume that the entire image is a human face.
+
     *Please use other algorithms to detect and crop faces.*
     '''
 
     def __init__(self, in_data, out_size=None):
-        '''
-        Init.
+        '''Init.
+
+        Args
+            in_size: a 2 elements tuple.
+
         NOTE: If the `in_size` and `out_size` are not in the same proportion,
             it will cause the image after processing to be distorted.
-
-        @Args
-            in_size: a 2 elements tuple.
         '''
+        self.scope_name = 'preprocessing'
         self.in_data = in_data
         self.in_size = in_data.shape[1:3]
         if out_size is None:
@@ -38,16 +39,14 @@ class preprocessing_for_image:
         self.__hyperparameter()
  
     def __gen_placeholder(self):
-        '''
-        Generate some Place Holder for preprocessing.
+        '''Generate some Place Holder for preprocessing.
         '''
         self.is_train_ph = tf.placeholder(dtype=tf.bool, shape=(), name='is_train')
         self.rotate_angles_ph = tf.placeholder(dtype=tf.float32, shape=(None,), name='rotate_angles')
         #self.color_ordering_ph = tf.placeholder(dtype=tf.uint8, shape=(0,), name='color_ordering')
 
     def __hyperparameter(self):
-        '''
-        Define some hyperparameter.
+        '''Define some hyperparameter.
         '''
         self.JPEG_QUALITY = (80, 100)
         # The value of `BRIGHTNESS` from cifar10.
@@ -57,8 +56,9 @@ class preprocessing_for_image:
         self.CONTRAST = (0.5, 1.5)
 
     def image_transformation(self, imgs):
-        '''
-        * Radom flip left/right.
+        '''Random transformation for the input images.
+
+        * Random flip left/right.
         * Random rotate, use a placeholder for random.
         * Random image quality.
         '''
@@ -72,7 +72,8 @@ class preprocessing_for_image:
         return imgs
 
     def distort_color(self, imgs):
-        '''
+        '''Random distort the color for the input images.
+
         * Random brightness.
         * Random saturation.
         * Random hue.
@@ -85,22 +86,21 @@ class preprocessing_for_image:
         return imgs
 
     def get_placeholder(self):
-        '''
-        Get the generated Place Holder.
+        '''Get the generated Place Holder.
         '''
         return self.is_train_ph, self.rotate_angles_ph
 
     def get_output(self):
+        '''Get the output tensor op using above preprocessing method.
         '''
-        Get the output tensor op using above preprocessing method.
-        '''
-        # Adjusting the resolution first will help reduce the amount of calculations.
-        resized_imgs = tf.image.resize_images(self.in_data, size=self.out_size)
-        imgs = tf.cast(resized_imgs, dtype=tf.float32)
-        train_fn = lambda: self.distort_color(self.image_transformation(imgs))
-        test_fn = lambda : imgs
-        imgs = tf.case([(tf.equal(self.is_train_ph, True), train_fn)], default=test_fn)
-        imgs = tf.image.per_image_standardization(imgs)
+        with tf.variable_scope(self.scope_name) as scope:
+            # Adjusting the resolution first will help reduce the amount of calculations.
+            resized_imgs = tf.image.resize_images(self.in_data, size=self.out_size)
+            imgs = tf.cast(resized_imgs, dtype=tf.float32)
+            train_fn = lambda: self.distort_color(self.image_transformation(imgs))
+            test_fn = lambda : imgs
+            imgs = tf.case([(tf.equal(self.is_train_ph, True), train_fn)], default=test_fn)
+            imgs = tf.image.per_image_standardization(imgs)
         return imgs
 
 def main(face_data):
