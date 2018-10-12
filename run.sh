@@ -11,8 +11,29 @@ else
     echo -e "\e[31;1mError\e[0m: Please install docker and nvidia-docker(2) if you have installed a NVIDIA graphics card."
     exit 1
 fi
+
+# For get image name.
+format="--format {{.Repository}}:{{.Tag}}"
+
+while getopts "i:" arg
+do
+    case "$arg" in
+        i) # Image name
+            TF_IMAGE=$($DOCKER_CMD image ls $OPTARG $format | head -n 1)
+            if [ -z "$TF_IMAGE" ]; then
+                echo -e "\e[31;1mWarning\e[0m: The image you specified does not exist, use the default image."
+            fi
+            ;;
+        *)
+            ;;
+    esac
+done
+
+if [ -z "$TF_IMAGE" ]; then
+    TF_IMAGE=$($DOCKER_CMD image ls tensorflow/tensorflow $format | head -n 1)
+fi
+
 #DOCKER_OPTIONS='--privileged=true'
-TF_IMAGE=`docker image ls tensorflow/tensorflow -q | head -n 1`
 if [ -z "$TF_IMAGE" ]; then
     echo -e "\e[31;1mError\e[0m: Please install a tensorflow/tensorflow docker image for this project."
     echo -e "\tYou can run follow command to pull it."
