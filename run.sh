@@ -15,7 +15,16 @@ fi
 # For get image name.
 format="--format {{.Repository}}:{{.Tag}}"
 
-while getopts "i:" arg
+DOCKER_OPTIONS=("run")
+#DOCKER_OPTIONS+=('--privileged=true')
+DOCKER_OPTIONS+=("--name $container_name")
+DOCKER_OPTIONS+=("--rm")
+DOCKER_OPTIONS+=("-it")
+DOCKER_OPTIONS+=("-p 8888:8888")
+DOCKER_OPTIONS+=("-p 6006:6006")
+DOCKER_OPTIONS+=("-v $DIR:/notebooks")
+
+while getopts "i:o:" arg
 do
     case "$arg" in
         i) # Image name
@@ -23,6 +32,9 @@ do
             if [ -z "$TF_IMAGE" ]; then
                 echo -e "\e[31;1mWarning\e[0m: The image you specified does not exist, use the default image."
             fi
+            ;;
+        o) # Docker options.
+            DOCKER_OPTIONS+=("$OPTARG")
             ;;
         *)
             ;;
@@ -33,11 +45,13 @@ if [ -z "$TF_IMAGE" ]; then
     TF_IMAGE=$($DOCKER_CMD image ls tensorflow/tensorflow $format | head -n 1)
 fi
 
-#DOCKER_OPTIONS='--privileged=true'
 if [ -z "$TF_IMAGE" ]; then
     echo -e "\e[31;1mError\e[0m: Please install a tensorflow/tensorflow docker image for this project."
     echo -e "\tYou can run follow command to pull it."
     echo -e "\t\e[1mdocker pull tensorflow/tensorflow:latest-py3\e[0m"
     exit 1
 fi
-exec $DOCKER_CMD run $DOCKER_OPTIONS --name $container_name --rm -it -p 8888:8888 -p 6006:6006 -v $DIR:/notebooks $TF_IMAGE
+
+DOCKER_OPTIONS+=("$TF_IMAGE")
+
+exec $DOCKER_CMD ${DOCKER_OPTIONS[@]}
