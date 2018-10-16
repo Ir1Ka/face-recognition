@@ -28,7 +28,7 @@ def variable_on_cpu(name,
     with tf.device('/cpu:0'):
         var = tf.get_variable(name, shape,
                               initializer=initializer,
-                              dtype=tf.float32
+                              dtype=tf.float32,
                               collections=collections)
     return var
 
@@ -73,9 +73,6 @@ def activation_summary(x):
     Returns:
         nothing
     '''
-    # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
-    # session. This helps the clarity of presentation on tensorboard.
-    tensor_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', x.op.name)
-    tf.summary.histogram(tensor_name + '/activations', x)
-    tf.summary.scalar(tensor_name + '/sparsity',
+    tf.summary.histogram(x.op.name + '/activations', x)
+    tf.summary.scalar(x.op.name + '/sparsity',
                                        tf.nn.zero_fraction(x))

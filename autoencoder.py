@@ -35,7 +35,7 @@ class stack_autoencoder:
         self.in_shape = self.in_data.shape
         self.layer_num = layer_num
         # The first element is the channels of input layer.
-        self.hidden_outputs = self.in_shape[-1:] + hidden_outputs
+        self.hidden_outputs = self.in_shape[-1:].as_list() + hidden_outputs
 
     def codec(imgs, filter, is_encode,
               stddev=5e-2,
@@ -78,7 +78,7 @@ class stack_autoencoder:
                 # Upsampling.
                 if new_size is None:
                     raise ValueError('The value of the new_size must be set if the is_encode is False.')
-                unsampling = tf.image.resize_nearest_nerghbor(layers[-1], new_size, name='upsample')
+                unsampling = tf.image.resize_nearest_neighbor(layers[-1], new_size, name='upsample')
                 layers.append(unsampling)
 
             # Convolution.
@@ -102,7 +102,7 @@ class stack_autoencoder:
                 layers.append(downsampling)
         return layers[-1]
 
-    def gen_model(self, filter_sizes=[3, 3]):
+    def gen_model(self, filter_sizes=[[3, 3]]):
         '''A wrapper that generates the model function.
 
         Args:
@@ -129,9 +129,9 @@ class stack_autoencoder:
             The final decoder output.
             Well, the output of the hidden layer will also be stored.
         '''
-        if len(filter_sizes) != 1 or len(filter_sizes) != self.layer_num:
+        if len(filter_sizes) != 1 and len(filter_sizes) != self.layer_num:
             raise ValueError('The length of filter_sizes must be equal 1 or layer_num.')
-        self.layer_train_ph = tf.placeholder(name='layer_train', shape=(), dtype=tf.uint8)
+        self.layer_train_ph = tf.placeholder(name='layer_train', shape=(), dtype=tf.int32)
         zero_constant = tf.constant(0.0, dtype=tf.float32, shape=(), name='zero_constant')
         if len(filter_sizes) == 1:
             filter_sizes = filter_sizes * self.layer_num
@@ -144,29 +144,29 @@ class stack_autoencoder:
         # Encode
         with tf.variable_scope('encoder') as scope:
             for i in range(self.layer_num):
-                name = 'hidden_%d' % i+1
-                filter = filter_sizes[i] + layers[-1].shape[-1:] + [self.hidden_outputs[i+1]]
+                name = 'hidden_%d' % (i+1)
+                filter = filter_sizes[i] + [self.hidden_outputs[i], self.hidden_outputs[i+1]]
                 layer = layers[-1]
                 if i != 0:
                     include_fn = lambda var=layers[-1]: var
                     exclude_fn = lambda: zero_constant
                     layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
-                hidden = codec(layer, filter, True, name=name)
-                size_each_hidden.append(hidden.shape[-3:-1])
+                hidden = stack_autoencoder. codec(layer, filter, True, name=name)
+                size_each_hidden.append(tf.shape(hidden)[-3:-1])
                 layers.append(hidden)
                 self.encoded.append(hidden)
 
         # Decode
         with tf.variable_scope('decoder') as scope:
             for i in range(self.layer_num-1, -1, -1):
-                name = 'hidden_%d' % i+1
-                filter = filter_sizes[i] + layers[-1].shape[-1:] + [self.hidden_outputs[i]]
+                name = 'hidden_%d' % (i+1)
+                filter = filter_sizes[i] + [self.hidden_outputs[i+1], self.hidden_outputs[i]]
                 layer = layers[-1]
                 if i != 0:
                     include_fn = lambda var=layers[-1]: var
                     exclude_fn = lambda: layers[i]
                     layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
-                hidden = codec(layer, filter, False, name=name, new_size=size_each_hidden[i])
+                hidden = stack_autoencoder.codec(layer, filter, False, name=name, new_size=size_each_hidden[i])
                 layers.append(hidden)
 
         # the net output - decoded.
@@ -225,7 +225,24 @@ class stack_autoencoder:
         return var_list
 
 def main():
-    pass
+    data = tf.constant(np.random.random([16, 128, 128, 3]), dtype=tf.float32, shape=[16, 128, 128, 3])
+    SAE = stack_autoencoder(data, 3, [32, 64, 64])
+    output = SAE.gen_model()
+    layer_train_ph = SAE.get_ph()
+    l2_distance = tf.reduce_mean((output - data)**2, axis=[1, 2, 3])
+    layer1_var = SAE.get_variable_for_layer(1)
+    layer2_var = SAE.get_variable_for_layer(2)
+    layer3_var = SAE.get_variable_for_layer(3)
+    layers_var = layer1_var + layer2_var + layer3_var
+    for var in layers_var:
+        print(var.name)
+
+    init = tf.initializers.variables(layers_var)
+    with tf.Session() as sess:
+        sess.run(init)
+        out_data, distance = sess.run([output, l2_distance], feed_dict={layer_train_ph:3})
+        print(out_data.shape)
+        print(distance)
 
 if __name__ == "__main__":
     import numpy as np
