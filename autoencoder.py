@@ -224,12 +224,33 @@ class stack_autoencoder:
                 var_list.append(var)
         return var_list
 
+    def loss(self, regular_coeffcient=1.0e-2, get_l2_distance=False):
+        '''Loss
+        '''
+        with tf.variable_scope('loss') as scope:
+            with tf.variable_scope('l2_distance') as scope:
+                self.l2_distance = tf.reduce_mean(tf.pow(self.in_data - self.decoded, 2))
+
+            with tf.variable_scope('l2_regular') as scope:
+                pred_fn_pairs = {}
+                for i in range(1, 1+self.layer_num):
+                    l2_regular_fn = lambda : tf.reduce_mean(tf.pow(self.get_encoded(i), 2))
+                    pred_fn_pairs[tf.equal(self.layer_train_ph, i)] = l2_regular_fn
+                self.l2_regular = tf.case(pred_fn_pairs) * regular_coeffcient
+            self.loss = self.l2_distance + self.l2_regular
+
+        if get_l2_distance:
+            return self.loss, self.l2_distance
+        else:
+            return self.loss
+
 def main():
-    data = tf.constant(np.random.random([16, 128, 128, 3]), dtype=tf.float32, shape=[16, 128, 128, 3])
+    data_shape = [32, 128, 128, 3]
+    data = tf.constant(np.random.random(data_shape)-0.5, dtype=tf.float32, shape=data_shape)
     SAE = stack_autoencoder(data, 3, [32, 64, 64])
     output = SAE.gen_model()
     layer_train_ph = SAE.get_ph()
-    l2_distance = tf.reduce_mean((output - data)**2, axis=[1, 2, 3])
+    loss, l2_distance = SAE.loss(get_l2_distance=True)
     layer1_var = SAE.get_variable_for_layer(1)
     layer2_var = SAE.get_variable_for_layer(2)
     layer3_var = SAE.get_variable_for_layer(3)
@@ -240,9 +261,12 @@ def main():
     init = tf.initializers.variables(layers_var)
     with tf.Session() as sess:
         sess.run(init)
-        out_data, distance = sess.run([output, l2_distance], feed_dict={layer_train_ph:3})
-        print(out_data.shape)
-        print(distance)
+        in_data, out_data, distance, loss_ = sess.run([data, output, l2_distance, loss], feed_dict={layer_train_ph:3})
+        print('input:', in_data[0:2, 0:2, 0:2,...])
+        print('output:', out_data[0:2, 0:2, 0:2,...])
+        print('out_data.shape:', out_data.shape)
+        print('l2_distance:', distance)
+        print('loss:', loss_)
 
 if __name__ == "__main__":
     import numpy as np
