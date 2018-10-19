@@ -13,6 +13,7 @@ import tensorflow as tf
 def variable_on_cpu(name,
                     shape,
                     initializer,
+                    trainable=None,
                     collections=None):
     '''Helper to create a Variable stored on CPU memory.
 
@@ -29,6 +30,7 @@ def variable_on_cpu(name,
         var = tf.get_variable(name, shape,
                               initializer=initializer,
                               dtype=tf.float32,
+                              trainable=trainable,
                               collections=collections)
     return var
 

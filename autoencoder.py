@@ -10,6 +10,71 @@ __author__ = 'IriKa'
 import tensorflow as tf
 import tools
 
+def codec(imgs, filter, is_encode,
+          stddev=5e-2,
+          name=None,
+          new_size=None,
+          ksize=[1, 2, 2, 1],
+          strides=[1, 2, 2, 1]):
+    '''Single layer encoder and decoder.
+
+    Args:
+        imgs: Images for encode or decode.
+        filter: The convolution kernel shape.
+        is_encode: `True` indicates that it is an encoder, and `False` indicates that it is a decoder.
+        stddev: The convolution kernel initializes the standard deviation.
+        name: Name of the codec. Default `encoder` if `is_encode` is `True`, else is `decoder`.
+        new_size: The size of the decoder output. If `is_encode` is `False`, the value must be set.
+        ksize: Downsampling ksize.
+        strides: Downsampling strides.
+
+    Returns:
+        Codec output.
+
+    Raises:
+        ValueError: If `is_encode` is not `bool`.
+            And if `new_size` is `None` when `is_encode` is `False`.
+    '''
+    if not isinstance(is_encode, bool):
+        raise ValueError('The value of the is_encode must be a bool type.')
+
+    if name is None:
+        if is_encode:
+            name = 'encoder'
+        else:
+            name = 'decoder'
+
+    layers = [imgs]
+
+    with tf.variable_scope(name) as scope:
+        if not is_encode:
+            # Upsampling.
+            if new_size is None:
+                raise ValueError('The value of the new_size must be set if the is_encode is False.')
+            unsampling = tf.image.resize_nearest_neighbor(layers[-1], new_size, name='upsample')
+            layers.append(unsampling)
+
+        # Convolution.
+        kernel = tools.variable_with_weight_decay('weights',
+                                                  shape=filter,
+                                                  stddev=stddev,
+                                                  wd=None)
+        conv = tf.nn.conv2d(layers[-1], kernel, [1, 1, 1, 1], padding='SAME')
+        biases = tools.variable_on_cpu('biases', filter[-1:], tf.constant_initializer(0.0))
+        pre_activation = tf.nn.bias_add(conv, biases)
+        # Activation.
+        activation = tf.nn.relu(pre_activation, name=scope.name)
+        layers.append(activation)
+
+        tools.activation_summary(layers[-1])
+
+        if is_encode:
+            # Downsampling.
+            downsampling = tf.nn.max_pool(layers[-1], ksize=ksize,
+                                     strides=strides, padding='SAME', name='downsample')
+            layers.append(downsampling)
+    return layers[-1]
+
 class stack_autoencoder:
     '''A NN AutoEncoder.
     '''
@@ -32,77 +97,17 @@ class stack_autoencoder:
 
         self.scope_name = 'stack_autoencoder'
         self.in_data = in_data
-        self.in_shape = self.in_data.shape
+        self.in_shape = tf.shape(self.in_data)
         self.layer_num = layer_num
         # The first element is the channels of input layer.
-        self.hidden_outputs = self.in_shape[-1:].as_list() + hidden_outputs
+        in_channal = self.in_data.shape.as_list()[-1]
+        if in_channal is None:
+            raise ValueError('The last dimension of input data must be known.')
+        self.hidden_outputs = [in_channal] + hidden_outputs
 
-    def codec(imgs, filter, is_encode,
-              stddev=5e-2,
-              name=None,
-              new_size=None,
-              ksize=[1, 2, 2, 1],
-              strides=[1, 2, 2, 1]):
-        '''Single layer encoder and decoder.
-
-        Args:
-            imgs: Images for encode or decode.
-            filter: The convolution kernel shape.
-            is_encode: `True` indicates that it is an encoder, and `False` indicates that it is a decoder.
-            stddev: The convolution kernel initializes the standard deviation.
-            name: Name of the codec. Default `encoder` if `is_encode` is `True`, else is `decoder`.
-            new_size: The size of the decoder output. If `is_encode` is `False`, the value must be set.
-            ksize: Downsampling ksize.
-            strides: Downsampling strides.
-
-        Returns:
-            Codec output.
-
-        Raises:
-            ValueError: If `is_encode` is not `bool`.
-                And if `new_size` is `None` when `is_encode` is `False`.
-        '''
-        if not isinstance(is_encode, bool):
-            raise ValueError('The value of the is_encode must be a bool type.')
-
-        if name is None:
-            if is_encode:
-                name = 'encoder'
-            else:
-                name = 'decoder'
-
-        layers = [imgs]
-
-        with tf.variable_scope(name) as scope:
-            if not is_encode:
-                # Upsampling.
-                if new_size is None:
-                    raise ValueError('The value of the new_size must be set if the is_encode is False.')
-                unsampling = tf.image.resize_nearest_neighbor(layers[-1], new_size, name='upsample')
-                layers.append(unsampling)
-
-            # Convolution.
-            kernel = tools.variable_with_weight_decay('weights',
-                                                      shape=filter,
-                                                      stddev=stddev,
-                                                      wd=None)
-            conv = tf.nn.conv2d(layers[-1], kernel, [1, 1, 1, 1], padding='SAME')
-            biases = tools.variable_on_cpu('biased', filter[-1:], tf.constant_initializer(0.0))
-            pre_activation = tf.nn.bias_add(conv, biases)
-            # Activation.
-            activation = tf.nn.relu(pre_activation, name=scope.name)
-            layers.append(activation)
-
-            tools.activation_summary(layers[-1])
-
-            if is_encode:
-                # Downsampling.
-                downsampling = tf.nn.max_pool(layers[-1], ksize=ksize,
-                                         strides=strides, padding='SAME', name='downsample')
-                layers.append(downsampling)
-        return layers[-1]
-
-    def gen_model(self, filter_sizes=[[3, 3]]):
+    def model(self, filter_sizes=[[3, 3]],
+                  ksize=[[1, 2, 2, 1]],
+                  strides=[[1, 2, 2, 1]]):
         '''A wrapper that generates the model function.
 
         Args:
@@ -110,20 +115,24 @@ class stack_autoencoder:
                 You can only provide one size so that all convolution kernel use the same size.
                 Well, you can provide size for each layer of convolution kernel.
                 *NOTE*: The convolution kernel of the encoder and decoder of the corresponding layer will use the same size.
+            ksize: The encode down sample ksize (max_pool).
+            strides: The encode down sample strides (max_pool).
 
         Returns:
             The final decoder output.
             Well, the output of the hidden layer will also be stored.
         '''
         with tf.variable_scope(self.scope_name) as scope:
-            return self.__gen_model(filter_sizes)
+            return self.__model(filter_sizes, ksize, strides)
 
-    def __gen_model(self, filter_sizes):
+    def __model(self, filter_sizes, ksize, strides):
         '''A generates the model function.
 
         Args:
-            filter_sizes:   The sizes of the convolution kernel.
-                See the `stack_autoencoder.gen_model` for more information.
+            filter_sizes: The sizes of the convolution kernel.
+                See the `stack_autoencoder.model` for more information.
+            ksize: The encode down sample ksize (max_pool).
+            strides: The encode down sample strides (max_pool).
 
         Returns:
             The final decoder output.
@@ -131,42 +140,54 @@ class stack_autoencoder:
         '''
         if len(filter_sizes) != 1 and len(filter_sizes) != self.layer_num:
             raise ValueError('The length of filter_sizes must be equal 1 or layer_num.')
-        self.layer_train_ph = tf.placeholder(name='layer_train', shape=(), dtype=tf.int32)
-        zero_constant = tf.constant(0.0, dtype=tf.float32, shape=(), name='zero_constant')
+        if len(ksize) != 1 and len(ksize) != self.layer_num:
+            raise ValueError('The length of ksize must be equal 1 or layer_num.')
+        if len(strides) != 1 and len(strides) != self.layer_num:
+            raise ValueError('The length of strides must be equal 1 or layer_num.')
+
         if len(filter_sizes) == 1:
             filter_sizes = filter_sizes * self.layer_num
+        if len(ksize) == 1:
+            ksize = ksize * self.layer_num
+        if len(strides) == 1:
+            strides = strides * self.layer_num
+
+        self.layer_train_ph = tf.placeholder(name='layer_train', shape=(), dtype=tf.int32)
+        zero_constant = tf.constant(0.0, dtype=tf.float32, shape=(), name='zero_constant')
         size_each_hidden = [self.in_shape[-3:-1]]
         layers = [self.in_data]
 
         # All of the encode outputs will store here.
-        self.encoded = [self.in_data]
+        self.encoded_list = [self.in_data]
 
         # Encode
         with tf.variable_scope('encoder') as scope:
             for i in range(self.layer_num):
                 name = 'hidden_%d' % (i+1)
-                filter = filter_sizes[i] + [self.hidden_outputs[i], self.hidden_outputs[i+1]]
+                filter = filter_sizes[i] + self.hidden_outputs[i: i+2]
                 layer = layers[-1]
                 if i != 0:
+                    zero_op = tf.fill(tf.shape(layers[-1]), 0.0, name='zero_%d' % (i+1))
                     include_fn = lambda var=layers[-1]: var
-                    exclude_fn = lambda: zero_constant
+                    exclude_fn = lambda var=zero_op: var
                     layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
-                hidden = stack_autoencoder. codec(layer, filter, True, name=name)
-                size_each_hidden.append(tf.shape(hidden)[-3:-1])
-                layers.append(hidden)
-                self.encoded.append(hidden)
+                encode = codec(layer, filter, True, name=name)
+                size_each_hidden.append(tf.shape(encode)[-3:-1])
+                layers.append(encode)
+                self.encoded_list.append(encode)
+                #print(layers[-1])
 
         # Decode
         with tf.variable_scope('decoder') as scope:
             for i in range(self.layer_num-1, -1, -1):
                 name = 'hidden_%d' % (i+1)
-                filter = filter_sizes[i] + [self.hidden_outputs[i+1], self.hidden_outputs[i]]
-                layer = layers[-1]
+                filter = filter_sizes[i] + self.hidden_outputs[i-self.layer_num: i-self.layer_num-2: -1]
+                decode = codec(layers[-1], filter, False, name=name, new_size=size_each_hidden[i])
+                hidden = decode
                 if i != 0:
-                    include_fn = lambda var=layers[-1]: var
-                    exclude_fn = lambda: layers[i]
-                    layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
-                hidden = stack_autoencoder.codec(layer, filter, False, name=name, new_size=size_each_hidden[i])
+                    include_fn = lambda var=decode: var
+                    exclude_fn = lambda var=layers[i]: var
+                    hidden = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
                 layers.append(hidden)
 
         # the net output - decoded.
@@ -185,7 +206,7 @@ class stack_autoencoder:
         Or visualize.
 
         Args:
-            index:  A `int`. The default is equal to `layer_num`. `0` means to get input of the AutoEncoder.
+            index: A `int`. The default is equal to `layer_num`. `0` means to get input of the AutoEncoder.
                 The value must be less than `layer_num`.
 
         Raises:
@@ -196,7 +217,7 @@ class stack_autoencoder:
 
         if index is None:
             index = self.layer_num
-        return self.encoded[index]
+        return self.encoded_list[index]
 
     def get_decoded(self):
         ''' Get decoded output of the Stack AutoEncoder.
@@ -209,9 +230,9 @@ class stack_autoencoder:
         Get the variables of the specified layer, which is convenient for Stack AutoEncoder training.
 
         Args:
-            index:      A `int`. Specifies which layer of variables to retrieve,
+            index: A `int`. Specifies which layer of variables to retrieve,
                 including the corresponding encoder layer and decoder layer.
-            trainable:  A `bool`. Indicates whether it is a trainingable variable. The `True` and default are trainable.
+            trainable: A `bool`. Indicates whether it is a trainingable variable. The `True` and default are trainable.
         '''
         var_list = []
         hidden_name = 'encoder/hidden_%d' % index, 'decoder/hidden_%d' % index
@@ -236,7 +257,7 @@ class stack_autoencoder:
                 for i in range(1, 1+self.layer_num):
                     l2_regular_fn = lambda : tf.reduce_mean(tf.pow(self.get_encoded(i), 2))
                     pred_fn_pairs[tf.equal(self.layer_train_ph, i)] = l2_regular_fn
-                self.l2_regular = tf.case(pred_fn_pairs) * regular_coeffcient
+                self.l2_regular = tf.case(pred_fn_pairs, exclusive=True) * regular_coeffcient
             self.loss = self.l2_distance + self.l2_regular
 
         if get_l2_distance:
@@ -248,7 +269,7 @@ def main():
     data_shape = [32, 128, 128, 3]
     data = tf.constant(np.random.random(data_shape)-0.5, dtype=tf.float32, shape=data_shape)
     SAE = stack_autoencoder(data, 3, [32, 64, 64])
-    output = SAE.gen_model()
+    output = SAE.model()
     layer_train_ph = SAE.get_ph()
     loss, l2_distance = SAE.loss(get_l2_distance=True)
     layer1_var = SAE.get_variable_for_layer(1)

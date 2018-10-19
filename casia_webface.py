@@ -19,8 +19,7 @@ WIDTH = 50
 HEIGHT = 50
 
 class casia_webface:
-    '''
-    The CASIA-WebFace batch generator.
+    '''The CASIA-WebFace batch generator.
     '''
     def __init__(self, faces_path=None):
         if faces_path is None:
@@ -31,6 +30,7 @@ class casia_webface:
         random.shuffle(self.face_names)
         self.index = 0
         self.size = len(self.face_names)
+        self.reshuffle_counter = 0
     
     def __enter__(self):
         print('casia_webface enter')
@@ -41,14 +41,13 @@ class casia_webface:
         self.close()
 
     def close(self):
-        '''
-        Close related resources.
+        '''Close related resources.
         '''
         self.faces.close()
 
     def image_preprocessing(self, img):
-        '''
-        The face preprocessing.
+        '''The face preprocessing.
+
         The best way is processing it using tensorflow.
         '''
         if img.mode is not 'RGB':
@@ -57,15 +56,14 @@ class casia_webface:
         return img
 
     def tensor_preprocessing(self, tensor):
-        '''
-        The tensor (numpy.ndarray) preprocessing.
+        '''The tensor (numpy.ndarray) preprocessing.
+
         The best way is processing it using tensorflow.
         '''
         return tensor
 
     def read_faces(self, face_names):
-        '''
-        Read face data from the zip file base on the `face_names`.
+        '''Read face data from the zip file base on the `face_names`.
         '''
         _faces = []
         for face_name in face_names:
@@ -76,17 +74,24 @@ class casia_webface:
         return np.concatenate(_faces, axis=0)
 
     def next_batch(self, batch_size=100):
-        '''
-        Get the next batch.
+        '''Get the next batch.
         '''
         if self.index + batch_size > self.size:
             self.face_names = random.shuffle(self.face_names)
             self.index = 0
+            self.reshuffle_counter += 1
         if self.index + batch_size > self.size:
             raise Exception('The number of faces is too small. size =', self.size, 'batch_size=', batch_size)
         face_names = self.face_names[self.index: self.index+batch_size]
         self.index += batch_size
         return self.read_faces(face_names), [os.path.dirname(name) for name in face_names]
+
+    def get_reshuffle_counter(self):
+        '''Get the reshuffle counter.
+
+        The variable is used to count epoch.
+        '''
+        return self.reshuffle_counter
 
 def main():
     with casia_webface() as face_data:

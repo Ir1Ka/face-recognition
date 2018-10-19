@@ -37,6 +37,7 @@ class preprocessing_for_image:
         #print('out_size', self.out_size)
         self.__gen_placeholder()
         self.__hyperparameter()
+        self.__preprocess()
  
     def __gen_placeholder(self):
         '''Generate some Place Holder for preprocessing.
@@ -85,13 +86,31 @@ class preprocessing_for_image:
         imgs = tf.image.random_contrast(imgs, lower=self.CONTRAST[0], upper=self.CONTRAST[1])
         return imgs
 
+    def data_standardization(self, imgs):
+        '''Standardize the input image batch data.
+
+        ** NOTE: the `imgs.dtype` must be about `tf.float`.
+        * Remove the DC component.
+        * Adjust the variance to 1.
+        '''
+        mean = tf.reduce_mean(imgs, axis=(1,2), keepdims=True)
+        std = tf.keras.backend.std(imgs, axis=(1,2), keepdims=True)
+        return (imgs - mean) / std
+
     def get_placeholder(self):
         '''Get the generated Place Holder.
         '''
         return self.is_train_ph, self.rotate_angles_ph
 
     def get_output(self):
-        '''Get the output tensor op using above preprocessing method.
+        '''Get the output tensor op.
+        '''
+        return self.output
+
+    def __preprocess(self):
+        '''Generate the preprocess using tensorflow.
+
+        Using above preprocessing method.
         '''
         with tf.variable_scope(self.scope_name) as scope:
             # Adjusting the resolution first will help reduce the amount of calculations.
@@ -100,8 +119,8 @@ class preprocessing_for_image:
             train_fn = lambda: self.distort_color(self.image_transformation(imgs))
             test_fn = lambda : imgs
             imgs = tf.case([(tf.equal(self.is_train_ph, True), train_fn)], default=test_fn)
-            imgs = tf.image.per_image_standardization(imgs)
-        return imgs
+            imgs = self.data_standardization(imgs)
+        self.output = imgs
 
 def main(face_data):
     PI = 3.1415
