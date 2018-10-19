@@ -107,7 +107,6 @@ venv.bak/
 *.ipynb
 .ipynb_checkpoints/
 
-
 # dataset
 dataset/
 CASIA-WebFace.zip
@@ -115,3 +114,6 @@ CASIA-WebFace/
 *.jpg
 *.jpeg
 *.png
+
+# train result
+data/
