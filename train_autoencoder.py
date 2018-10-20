@@ -38,6 +38,7 @@ class trainer:
         self.angles_max_delta = 15 / 180 * PI
         self.max_gradient = 1
         self.lr_init = 1e-3
+        # FIXME: The total_step calculation wrong.
         self.total_step = (self.ae_hidden_layer_num
                             * self.epochs
                             * (self.faces.size // self.batch_size))

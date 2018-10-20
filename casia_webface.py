@@ -77,7 +77,7 @@ class casia_webface:
         '''Get the next batch.
         '''
         if self.index + batch_size > self.size:
-            self.face_names = random.shuffle(self.face_names)
+            random.shuffle(self.face_names)
             self.index = 0
             self.reshuffle_counter += 1
         if self.index + batch_size > self.size:
