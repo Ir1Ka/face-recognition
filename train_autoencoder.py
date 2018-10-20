@@ -48,6 +48,7 @@ class trainer:
 
         # PlaceHolder
         self.in_data_ph = tf.placeholder(dtype=tf.uint8, shape=[None, None, None, 3], name='input_data')
+        self.train_ph = tf.placeholder(dtype=tf.bool, shape=[], name='is_train')
         #self.keep_prob = tf.placeholder(tf.float32, [], name='keep_prob')
         
         # Variables
@@ -78,7 +79,7 @@ class trainer:
         self.init_op = tf.initializers.variables(self.vars)
 
         # PlaceHolder
-        self.is_train_ph, self.rotate_angles_ph = self.prepro.get_placeholder()
+        self.rotate_angles_ph = self.prepro.get_placeholder()
         self.layer_train_ph = self.autoencoder.get_ph()
 
         self.config = tf.ConfigProto(allow_soft_placement=True)
@@ -113,7 +114,7 @@ class trainer:
         # FIXME: Please use asynchronous instead.
         batch, _ = self.faces.next_batch(batch_size=self.batch_size)
         feed_dict[self.in_data_ph] = batch
-        feed_dict[self.is_train_ph] = is_train
+        feed_dict[self.train_ph] = is_train
         feed_dict[self.rotate_angles_ph] = np.random.uniform(
                 low=-self.angles_max_delta,
                 high=self.angles_max_delta,
@@ -122,9 +123,9 @@ class trainer:
         return feed_dict
 
     def __model(self):
-        self.prepro = preprocess(self.in_data_ph, out_size=self.pre_out_size)
+        self.prepro = preprocess(self.in_data_ph, self.train_ph, out_size=self.pre_out_size, normalization=False)
         self.preprocessed = self.prepro.get_output()
-        self.autoencoder = sae(self.preprocessed, self.ae_hidden_layer_num, self.ae_hidden_outputs)
+        self.autoencoder = sae(self.preprocessed, self.ae_hidden_layer_num, self.ae_hidden_outputs, self.train_ph)
         self.decoded = self.autoencoder.model()
         self.loss, self.l2_distance = self.autoencoder.loss(get_l2_distance=True)
 

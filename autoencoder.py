@@ -8,6 +8,8 @@ Auto Encoder Neural Networks
 __author__ = 'IriKa'
 
 import tensorflow as tf
+from tensorflow.python.training.moving_averages import assign_moving_average
+
 import tools
 
 def codec(imgs, filter, is_encode,
@@ -40,9 +42,9 @@ def codec(imgs, filter, is_encode,
 
     if name is None:
         if is_encode:
-            name = 'encoder'
+            name = 'encode'
         else:
-            name = 'decoder'
+            name = 'decode'
 
     layers = [imgs]
 
@@ -60,7 +62,7 @@ def codec(imgs, filter, is_encode,
                                                   stddev=stddev,
                                                   wd=None)
         conv = tf.nn.conv2d(layers[-1], kernel, [1, 1, 1, 1], padding='SAME')
-        biases = tools.variable_on_cpu('biases', filter[-1:], tf.constant_initializer(0.0))
+        biases = tools.variable_on_cpu('biases', filter[-1:], tf.zeros_initializer)
         pre_activation = tf.nn.bias_add(conv, biases)
         # Activation.
         activation = tf.nn.relu(pre_activation, name=scope.name)
@@ -75,16 +77,37 @@ def codec(imgs, filter, is_encode,
             layers.append(downsampling)
     return layers[-1]
 
+def batch_norm(x, train, eps=1e-05, decay=0.9, affine=True, name=None):
+    with tf.variable_scope(name, default_name='BatchNorm2d'):
+        params_shape = x.shape.as_list()[-1:]
+        moving_mean = tools.variable_on_cpu('mean', params_shape, tf.zeros_initializer, trainable=False)
+        moving_variance = tools.variable_on_cpu('variance', params_shape, tf.ones_initializer, trainable=False)
+
+        def mean_var_with_update():
+            mean, variance = tf.nn.moments(x, list(range(len(x.get_shape()) - 1)), name='moments')
+            with tf.control_dependencies([assign_moving_average(moving_mean, mean, decay),
+                                          assign_moving_average(moving_variance, variance, decay)]):
+                return tf.identity(mean), tf.identity(variance)
+        mean, variance = tf.cond(train, mean_var_with_update, lambda: (moving_mean, moving_variance))
+        if affine:
+            beta = tools.variable_on_cpu('beta', params_shape, initializer=tf.zeros_initializer)
+            gamma = tools.variable_on_cpu('gamma', params_shape, initializer=tf.ones_initializer)
+            x = tf.nn.batch_normalization(x, mean, variance, beta, gamma, eps)
+        else:
+            x = tf.nn.batch_normalization(x, mean, variance, None, None, eps)
+        return x
+
 class stack_autoencoder:
     '''A NN AutoEncoder.
     '''
-    def __init__(self, in_data, layer_num, hidden_outputs):
+    def __init__(self, in_data, layer_num, hidden_outputs, train):
         '''Constructor
 
         Args:
             in_data: A 4-D `Tensor`. Note, the last 3-D shape must be known and cannot be `None`.
             layer_num: A `int`. Indicates the number of layers of the `stack_autoencoder`.
             hidden_outputs: A list of hidden layers output feature maps.
+            train: A `bool` type tensor. It means that current is training or testing.
 
         Raises:
             ValueError: If the length of the `hidden_outputs` is not equal `layer_num`.
@@ -104,6 +127,7 @@ class stack_autoencoder:
         if in_channal is None:
             raise ValueError('The last dimension of input data must be known.')
         self.hidden_outputs = [in_channal] + hidden_outputs
+        self.train_ph = train
 
     def model(self, filter_sizes=[[3, 3]],
                   ksize=[[1, 2, 2, 1]],
@@ -163,31 +187,31 @@ class stack_autoencoder:
         # Encode
         with tf.variable_scope('encoder') as scope:
             for i in range(self.layer_num):
-                name = 'hidden_%d' % (i+1)
                 filter = filter_sizes[i] + self.hidden_outputs[i: i+2]
                 layer = layers[-1]
-                if i != 0:
-                    zero_op = tf.fill(tf.shape(layers[-1]), 0.0, name='zero_%d' % (i+1))
-                    include_fn = lambda var=layers[-1]: var
-                    exclude_fn = lambda var=zero_op: var
-                    layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
-                encode = codec(layer, filter, True, name=name)
-                size_each_hidden.append(tf.shape(encode)[-3:-1])
+                with tf.variable_scope('hidden_%d' % (i+1)) as scope:
+                    if i != 0:
+                        include_fn = lambda var=layers[-1]: var
+                        exclude_fn = lambda var=layers[-1]: tf.fill(tf.shape(var), 0.0, name='zero')
+                        layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
+                    bn = batch_norm(layer, self.train_ph, name='BN')
+                    encode = codec(bn, filter, True)
+                    size_each_hidden.append(tf.shape(encode)[-3:-1])
                 layers.append(encode)
                 self.encoded_list.append(encode)
-                #print(layers[-1])
 
         # Decode
         with tf.variable_scope('decoder') as scope:
             for i in range(self.layer_num-1, -1, -1):
-                name = 'hidden_%d' % (i+1)
                 filter = filter_sizes[i] + self.hidden_outputs[i-self.layer_num: i-self.layer_num-2: -1]
-                decode = codec(layers[-1], filter, False, name=name, new_size=size_each_hidden[i])
-                hidden = decode
-                if i != 0:
-                    include_fn = lambda var=decode: var
-                    exclude_fn = lambda var=layers[i]: var
-                    hidden = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
+                with tf.variable_scope('hidden_%d' % (i+1)) as scope:
+                    bn = batch_norm(layers[-1], self.train_ph, name='BN')
+                    decode = codec(bn, filter, False, new_size=size_each_hidden[i])
+                    hidden = decode
+                    if i != 0:
+                        include_fn = lambda var=decode: var
+                        exclude_fn = lambda var=layers[i]: var
+                        hidden = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
                 layers.append(hidden)
 
         # the net output - decoded.
@@ -268,7 +292,8 @@ class stack_autoencoder:
 def main():
     data_shape = [32, 128, 128, 3]
     data = tf.constant(np.random.random(data_shape)-0.5, dtype=tf.float32, shape=data_shape)
-    SAE = stack_autoencoder(data, 3, [32, 64, 64])
+    train_ph = tf.placeholder(dtype=tf.bool, shape=[], name='is_train')
+    SAE = stack_autoencoder(data, 3, [32, 64, 64], train_ph)
     output = SAE.model()
     layer_train_ph = SAE.get_ph()
     loss, l2_distance = SAE.loss(get_l2_distance=True)
@@ -279,10 +304,10 @@ def main():
     for var in layers_var:
         print(var.name)
 
-    init = tf.initializers.variables(layers_var)
+    init = tf.initializers.variables(tf.global_variables())
     with tf.Session() as sess:
         sess.run(init)
-        in_data, out_data, distance, loss_ = sess.run([data, output, l2_distance, loss], feed_dict={layer_train_ph:3})
+        in_data, out_data, distance, loss_ = sess.run([data, output, l2_distance, loss], feed_dict={layer_train_ph:3, train_ph: False})
         print('input:', in_data[0:2, 0:2, 0:2,...])
         print('output:', out_data[0:2, 0:2, 0:2,...])
         print('out_data.shape:', out_data.shape)

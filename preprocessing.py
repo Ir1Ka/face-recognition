@@ -18,23 +18,26 @@ class preprocessing_for_image:
     *Please use other algorithms to detect and crop faces.*
     '''
 
-    def __init__(self, in_data, out_size=None):
+    def __init__(self, in_data, train, out_size=None, normalization=True):
         '''Init.
 
-        Args
-            in_size: a 2 elements tuple.
+        Args:
+            in_data: A 4-dimension tensor.
+            train: A `bool` type tensor. It means that current is training or testing.
+            out_size: A 2 `int` elements `tuple` or `list`. Default same as `in_data` size.
+            normalization: Normalization for outputs. Default is `True`.
 
         NOTE: If the `in_size` and `out_size` are not in the same proportion,
             it will cause the image after processing to be distorted.
         '''
         self.scope_name = 'preprocessing'
         self.in_data = in_data
+        self.train_ph = train
         self.in_size = in_data.shape[1:3]
         if out_size is None:
             out_size = self.in_size
         self.out_size = out_size
-        #print('in_size', self.in_size)
-        #print('out_size', self.out_size)
+        self.normalization = normalization
         self.__gen_placeholder()
         self.__hyperparameter()
         self.__preprocess()
@@ -42,7 +45,6 @@ class preprocessing_for_image:
     def __gen_placeholder(self):
         '''Generate some Place Holder for preprocessing.
         '''
-        self.is_train_ph = tf.placeholder(dtype=tf.bool, shape=(), name='is_train')
         self.rotate_angles_ph = tf.placeholder(dtype=tf.float32, shape=(None,), name='rotate_angles')
         #self.color_ordering_ph = tf.placeholder(dtype=tf.uint8, shape=(0,), name='color_ordering')
 
@@ -63,13 +65,14 @@ class preprocessing_for_image:
         * Random rotate, use a placeholder for random.
         * Random image quality.
         '''
-        # Whether to do the flip, you need to do more research.
-        imgs = tf.image.random_flip_left_right(imgs)
-        # The angle of rotation is in radians.
-        imgs = tf.contrib.image.rotate(imgs, self.rotate_angles_ph)
-        # Temporarily not randomly adjusting the image quality,
-        # it may be due to usage or tf bugs, and the image quality cannot be adjusted in batches.
-        #imgs = tf.image.random_jpeg_quality(imgs, self.JPEG_QUALITY[0], self.JPEG_QUALITY[1])
+        with tf.variable_scope('image_transformation') as scope:
+            # Whether to do the flip, you need to do more research.
+            imgs = tf.image.random_flip_left_right(imgs)
+            # The angle of rotation is in radians.
+            imgs = tf.contrib.image.rotate(imgs, self.rotate_angles_ph)
+            # Temporarily not randomly adjusting the image quality,
+            # it may be due to usage or tf bugs, and the image quality cannot be adjusted in batches.
+            #imgs = tf.image.random_jpeg_quality(imgs, self.JPEG_QUALITY[0], self.JPEG_QUALITY[1])
         return imgs
 
     def distort_color(self, imgs):
@@ -80,10 +83,11 @@ class preprocessing_for_image:
         * Random hue.
         * Random contrast.
         '''
-        imgs = tf.image.random_brightness(imgs, max_delta=self.BRIGHTNESS)
-        imgs = tf.image.random_saturation(imgs, lower=self.SATURATION[0], upper=self.SATURATION[1])
-        imgs = tf.image.random_hue(imgs, max_delta=self.HUE)
-        imgs = tf.image.random_contrast(imgs, lower=self.CONTRAST[0], upper=self.CONTRAST[1])
+        with tf.variable_scope('distort_color') as scope:
+            imgs = tf.image.random_brightness(imgs, max_delta=self.BRIGHTNESS)
+            imgs = tf.image.random_saturation(imgs, lower=self.SATURATION[0], upper=self.SATURATION[1])
+            imgs = tf.image.random_hue(imgs, max_delta=self.HUE)
+            imgs = tf.image.random_contrast(imgs, lower=self.CONTRAST[0], upper=self.CONTRAST[1])
         return imgs
 
     def data_standardization(self, imgs):
@@ -93,14 +97,16 @@ class preprocessing_for_image:
         * Remove the DC component.
         * Adjust the variance to 1.
         '''
-        mean = tf.reduce_mean(imgs, axis=(1,2), keepdims=True)
-        std = tf.keras.backend.std(imgs, axis=(1,2), keepdims=True)
-        return (imgs - mean) / std
+        with tf.variable_scope('normalization') as scope:
+            axis = list(range(len(imgs.get_shape()) - 1))
+            mean, variance = tf.nn.moments(imgs, axis)
+            bn = tf.nn.batch_normalization(imgs, mean, variance, 0., 1., 1e-3)
+        return bn
 
     def get_placeholder(self):
         '''Get the generated Place Holder.
         '''
-        return self.is_train_ph, self.rotate_angles_ph
+        return self.rotate_angles_ph
 
     def get_output(self):
         '''Get the output tensor op.
@@ -118,8 +124,9 @@ class preprocessing_for_image:
             imgs = tf.cast(resized_imgs, dtype=tf.float32)
             train_fn = lambda: self.distort_color(self.image_transformation(imgs))
             test_fn = lambda : imgs
-            imgs = tf.case([(tf.equal(self.is_train_ph, True), train_fn)], default=test_fn)
-            imgs = self.data_standardization(imgs)
+            imgs = tf.cond(self.train_ph, train_fn, test_fn)
+            if self.normalization is True:
+                imgs = self.data_standardization(imgs)
         self.output = imgs
 
 def main(face_data):
@@ -129,8 +136,9 @@ def main(face_data):
     rotate_angles_max_delta = 15 / 180 * PI
 
     in_ph = tf.placeholder(dtype=tf.uint8, shape=(None, 250, 250, 3), name='in_data')
-    imgs_preprocess = preprocessing_for_image(in_ph)
-    is_train_ph, rotate_angles_ph = imgs_preprocess.get_placeholder()
+    train_ph = tf.placeholder(dtype=tf.bool, shape=[], name='is_train')
+    imgs_preprocess = preprocessing_for_image(in_ph, train_ph)
+    rotate_angles_ph = imgs_preprocess.get_placeholder()
     with tf.device('/device:GPU:0'):
         out = imgs_preprocess.get_output()
     # This configuration is required, otherwise an error will be run, for the reason of the beginning of the file.
@@ -145,7 +153,7 @@ def main(face_data):
             #plt.show()
             rotate_angles = np.random.uniform(low=-rotate_angles_max_delta, high=rotate_angles_max_delta, size=batch_size)
             print('rotate angle:', rotate_angles[0])
-            feed_dict = {in_ph: batch, is_train_ph: True, rotate_angles_ph: rotate_angles}
+            feed_dict = {in_ph: batch, train_ph: True, rotate_angles_ph: rotate_angles}
             preprocessed = out.eval(feed_dict=feed_dict)
             '''
             # To show the preprocessed images.
