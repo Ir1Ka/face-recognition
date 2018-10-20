@@ -194,8 +194,8 @@ class stack_autoencoder:
                         include_fn = lambda var=layers[-1]: var
                         exclude_fn = lambda var=layers[-1]: tf.fill(tf.shape(var), 0.0, name='zero')
                         layer = tf.cond(tf.less(i, self.layer_train_ph), include_fn, exclude_fn)
-                    bn = batch_norm(layer, self.train_ph, name='BN')
-                    encode = codec(bn, filter, True)
+                        layer = batch_norm(layer, self.train_ph, name='BN')
+                    encode = codec(layer, filter, True)
                     size_each_hidden.append(tf.shape(encode)[-3:-1])
                 layers.append(encode)
                 self.encoded_list.append(encode)

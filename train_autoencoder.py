@@ -37,7 +37,7 @@ class trainer:
         self.batch_size = self.BATCH_SIZE * (2**self.ae_hidden_layer_num)
         self.angles_max_delta = 15 / 180 * PI
         self.max_gradient = 1
-        self.lr_init = 1e-3
+        self.lr_init = 1e-2
         # FIXME: The total_step calculation wrong.
         self.total_step = (self.ae_hidden_layer_num
                             * self.epochs
@@ -123,7 +123,7 @@ class trainer:
         return feed_dict
 
     def __model(self):
-        self.prepro = preprocess(self.in_data_ph, self.train_ph, out_size=self.pre_out_size, normalization=False)
+        self.prepro = preprocess(self.in_data_ph, self.train_ph, out_size=self.pre_out_size)
         self.preprocessed = self.prepro.get_output()
         self.autoencoder = sae(self.preprocessed, self.ae_hidden_layer_num, self.ae_hidden_outputs, self.train_ph)
         self.decoded = self.autoencoder.model()
