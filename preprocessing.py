@@ -149,8 +149,6 @@ def main(face_data):
             print('Index:', i)
             batch, lable = face_data.next_batch(batch_size=batch_size)
             print('name:', lable[0])
-            #plt.imshow(batch[0, ...])
-            #plt.show()
             rotate_angles = np.random.uniform(low=-rotate_angles_max_delta, high=rotate_angles_max_delta, size=batch_size)
             print('rotate angle:', rotate_angles[0])
             feed_dict = {in_ph: batch, train_ph: True, rotate_angles_ph: rotate_angles}

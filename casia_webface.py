@@ -10,6 +10,7 @@ __author__ = 'IriKa'
 import numpy as np
 from PIL import Image
 import os
+import sys
 import zipfile
 import random
 from io import BytesIO
@@ -51,7 +52,7 @@ class casia_webface:
         The best way is processing it using tensorflow.
         '''
         if img.mode is not 'RGB':
-            print('Warning: The image mode is not RGB, but we need a RGB image, so we need convert it to RGB.')
+            print('Warning: The image mode is not RGB, but we need a RGB image, so we need convert it to RGB.', file=sys.stderr)
             img = img.convert('RGB')
         return img
 

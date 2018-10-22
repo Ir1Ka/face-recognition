@@ -17,7 +17,8 @@ def codec(imgs, filter, is_encode,
           name=None,
           new_size=None,
           ksize=[1, 2, 2, 1],
-          strides=[1, 2, 2, 1]):
+          strides=[1, 2, 2, 1],
+          active_fn=tf.nn.sigmoid):
     '''Single layer encoder and decoder.
 
     Args:
@@ -65,7 +66,7 @@ def codec(imgs, filter, is_encode,
         biases = tools.variable_on_cpu('biases', filter[-1:], tf.zeros_initializer)
         pre_activation = tf.nn.bias_add(conv, biases)
         # Activation.
-        activation = tf.nn.relu(pre_activation, name=scope.name)
+        activation = active_fn(pre_activation, name=scope.name)
         layers.append(activation)
 
         tools.activation_summary(layers[-1])
@@ -100,7 +101,7 @@ def batch_norm(x, train, eps=1e-05, decay=0.9, affine=True, name=None):
 class stack_autoencoder:
     '''A NN AutoEncoder.
     '''
-    def __init__(self, in_data, layer_num, hidden_outputs, train):
+    def __init__(self, in_data, layer_num, hidden_outputs, train, need_norm=False):
         '''Constructor
 
         Args:
@@ -112,15 +113,14 @@ class stack_autoencoder:
         Raises:
             ValueError: If the length of the `hidden_outputs` is not equal `layer_num`.
         '''
-        shape = in_data.shape
-        if None in shape[-3:]:
-            raise ValueError('The last 3-D shape must be known and cannot be None.')
+        shape = in_data.shape.as_list()
+        if shape[-1] is None:
+            raise ValueError('The lastest dimension must be known and cannot be None.')
         if len(hidden_outputs) != layer_num:
             raise ValueError('The length of the hidden_outputs must be equal layer_num.')
 
         self.scope_name = 'stack_autoencoder'
         self.in_data = in_data
-        self.in_shape = tf.shape(self.in_data)
         self.layer_num = layer_num
         # The first element is the channels of input layer.
         in_channal = self.in_data.shape.as_list()[-1]
@@ -128,6 +128,7 @@ class stack_autoencoder:
             raise ValueError('The last dimension of input data must be known.')
         self.hidden_outputs = [in_channal] + hidden_outputs
         self.train_ph = train
+        self.need_norm = need_norm
 
     def model(self, filter_sizes=[[3, 3]],
                   ksize=[[1, 2, 2, 1]],
@@ -146,7 +147,7 @@ class stack_autoencoder:
             The final decoder output.
             Well, the output of the hidden layer will also be stored.
         '''
-        with tf.variable_scope(self.scope_name) as scope:
+        with tf.variable_scope(self.scope_name, reuse=tf.AUTO_REUSE) as scope:
             return self.__model(filter_sizes, ksize, strides)
 
     def __model(self, filter_sizes, ksize, strides):
@@ -176,6 +177,13 @@ class stack_autoencoder:
         if len(strides) == 1:
             strides = strides * self.layer_num
 
+        if self.need_norm:
+            self.in_data = batch_norm(self.in_data, self.train_ph, active_fn=False, name='BN')
+        # Map the input data between 0 and 1.
+        # Because the decoded output is mapped between 0 and 1 (activation function is `tf.nn.sigmoid`).
+        self.in_data = tf.nn.sigmoid(self.in_data)
+        self.in_shape = tf.shape(self.in_data)
+
         self.layer_train_ph = tf.placeholder(name='layer_train', shape=(), dtype=tf.int32)
         zero_constant = tf.constant(0.0, dtype=tf.float32, shape=(), name='zero_constant')
         size_each_hidden = [self.in_shape[-3:-1]]
@@ -185,7 +193,7 @@ class stack_autoencoder:
         self.encoded_list = [self.in_data]
 
         # Encode
-        with tf.variable_scope('encoder') as scope:
+        with tf.variable_scope('encoder', reuse=tf.AUTO_REUSE) as scope:
             for i in range(self.layer_num):
                 filter = filter_sizes[i] + self.hidden_outputs[i: i+2]
                 layer = layers[-1]
@@ -201,7 +209,7 @@ class stack_autoencoder:
                 self.encoded_list.append(encode)
 
         # Decode
-        with tf.variable_scope('decoder') as scope:
+        with tf.variable_scope('decoder', reuse=tf.AUTO_REUSE) as scope:
             for i in range(self.layer_num-1, -1, -1):
                 filter = filter_sizes[i] + self.hidden_outputs[i-self.layer_num: i-self.layer_num-2: -1]
                 with tf.variable_scope('hidden_%d' % (i+1)) as scope:
@@ -248,7 +256,7 @@ class stack_autoencoder:
         '''
         return self.decoded
 
-    def get_variable_for_layer(self, index, trainable=None):
+    def get_variable_for_layer(self, index, trainable=None, scope=None):
         ''' Get variable of the Stack AutoEncoder.
 
         Get the variables of the specified layer, which is convenient for Stack AutoEncoder training.
@@ -258,14 +266,16 @@ class stack_autoencoder:
                 including the corresponding encoder layer and decoder layer.
             trainable: A `bool`. Indicates whether it is a trainingable variable. The `True` and default are trainable.
         '''
+        print('Filter the variables for %d-th layer.' % index)
         var_list = []
-        hidden_name = 'encoder/hidden_%d' % index, 'decoder/hidden_%d' % index
+        hidden_name = ['%s/encoder/hidden_%d' % (self.scope_name, index), '%s/decoder/hidden_%d' % (self.scope_name, index)]
         if trainable is True or trainable is None:
-            all_vars = tf.trainable_variables(scope=self.scope_name)
+            all_vars = tf.trainable_variables(scope=scope)
         else:
-            all_vars = tf.global_variables(scope=self.scope_name)
+            all_vars = tf.global_variables(scope=scope)
         for var in all_vars:
             if (hidden_name[0] in var.name) or (hidden_name[1] in var.name):
+                print('Selected var:', var.name)
                 var_list.append(var)
         return var_list
 

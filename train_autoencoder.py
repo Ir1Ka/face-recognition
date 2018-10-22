@@ -21,11 +21,12 @@ class trainer:
 
     def __init__(self):
         self.faces = webface()
-        
+
+        # Report rate
         self.train_report_rate = 100
-        self.test_report_rate = 1000
-        self.layer_report_rate = 1000
-        self.save_rate = 500
+        self.test_report_rate = 500
+        self.layer_report_rate = 500
+        self.save_rate = 200
 
         # Hyper parameters
         self.ae_hidden_outputs = [16, 32, 32, 64]
@@ -33,15 +34,10 @@ class trainer:
         self.pre_out_size = [128, 128]
         self.epochs = 10
         self.epoch_counter = self.faces.get_reshuffle_counter()
-        self.BATCH_SIZE = 16
-        self.batch_size = self.BATCH_SIZE * (2**self.ae_hidden_layer_num)
-        self.angles_max_delta = 15 / 180 * PI
+        self.batch_sizes = [64, 64, 32, 16]
+        self.angles_max_delta = 15. / 180. * PI
         self.max_gradient = 1
-        self.lr_init = 1e-2
-        # FIXME: The total_step calculation wrong.
-        self.total_step = (self.ae_hidden_layer_num
-                            * self.epochs
-                            * (self.faces.size // self.batch_size))
+        self.lr_init = 1e-1
 
         self.logs_dir = 'data/logs'
         self.model_fname = 'data/logs/autoencoder_model.ckpt'
@@ -50,30 +46,31 @@ class trainer:
         self.in_data_ph = tf.placeholder(dtype=tf.uint8, shape=[None, None, None, 3], name='input_data')
         self.train_ph = tf.placeholder(dtype=tf.bool, shape=[], name='is_train')
         #self.keep_prob = tf.placeholder(tf.float32, [], name='keep_prob')
-        
-        # Variables
-        self.global_step = variable_on_cpu('global_step', None, 0.0, trainable=False)
 
         with tf.device('/device:GPU:0'):
             self.__model()
-            self.lr = tf.train.exponential_decay(
-                            self.lr_init,
-                            self.global_step,
-                            self.total_step,
-                            0.001,
-                            name='auto_lr')
             with tf.variable_scope('train') as scope:
-                self.opt = tf.train.AdamOptimizer(learning_rate=self.lr)
                 self.train_ops = []
                 for i in range(1, self.ae_hidden_layer_num+1):
+                    global_step = variable_on_cpu('global_step_%d' % i, None, 0.0, trainable=False)
+                    total_step = self.epochs * self.faces.size // self.batch_sizes[i-1]
+                    print('The total_step for %d-th layer: %8s' % (i, total_step))
+                    lr = tf.train.exponential_decay(
+                                    self.lr_init,
+                                    global_step,
+                                    total_step,
+                                    1e-3,
+                                    name='auto_lr_%d' % i)
+                    tf.summary.scalar('lr_%d' % i, lr, collections=['train'])
+                    opt = tf.train.AdamOptimizer(learning_rate=lr)
                     vars_for_layer = self.autoencoder.get_variable_for_layer(i)
                     gradients = tf.gradients(self.loss, vars_for_layer)
                     clipped_gradients, _ = tf.clip_by_global_norm(gradients, self.max_gradient)
-                    self.train_ops.append(self.opt.apply_gradients(
-                                                zip(clipped_gradients,
-                                                        vars_for_layer),
-                                                global_step=self.global_step,
-                                                name='train_op_%d' % i))
+                    self.train_ops.append(opt.apply_gradients(
+                                            zip(clipped_gradients,
+                                                vars_for_layer),
+                                            global_step=global_step,
+                                            name='train_op_%d' % i))
 
         self.vars = tf.global_variables() + tf.local_variables()
         self.init_op = tf.initializers.variables(self.vars)
@@ -89,10 +86,13 @@ class trainer:
         self.saver = tf.train.Saver()
         self.summary_writer = tf.summary.FileWriter(self.logs_dir, graph=self.sess.graph)
         tf.summary.image('input_data', self.in_data_ph, collections=['layers_out'])
-        tf.summary.scalar('learn_rate', self.lr, collections=['train'])
+        for i in range(1, self.ae_hidden_layer_num+1):
+            tf.summary.image('encode_%d' % i, self.autoencoder.get_encoded(i)[...,-1:], collections=['layers_out_%d' % i])
 
         self.train_merged = tf.summary.merge_all(key='train', name='train')
-        self.layers_out_merged = tf.summary.merge_all(key='layers_out', name='layers_out')
+        self.layers_out_mergeds = []
+        for i in range(1, self.ae_hidden_layer_num+1):
+            self.layers_out_mergeds.append(tf.summary.merge_all(key='layers_out_%d' % i, name='layers_out_%d' % i))
 
     def __enter__(self):
         return self
@@ -112,20 +112,20 @@ class trainer:
             return None
         feed_dict = {}
         # FIXME: Please use asynchronous instead.
-        batch, _ = self.faces.next_batch(batch_size=self.batch_size)
+        batch, _ = self.faces.next_batch(batch_size=self.batch_sizes[train_layer-1])
         feed_dict[self.in_data_ph] = batch
         feed_dict[self.train_ph] = is_train
         feed_dict[self.rotate_angles_ph] = np.random.uniform(
                 low=-self.angles_max_delta,
                 high=self.angles_max_delta,
-                size=self.batch_size)
+                size=self.batch_sizes[train_layer-1])
         feed_dict[self.layer_train_ph] = train_layer
         return feed_dict
 
     def __model(self):
-        self.prepro = preprocess(self.in_data_ph, self.train_ph, out_size=self.pre_out_size)
+        self.prepro = preprocess(self.in_data_ph, self.train_ph, out_size=self.pre_out_size, normalization=False)
         self.preprocessed = self.prepro.get_output()
-        self.autoencoder = sae(self.preprocessed, self.ae_hidden_layer_num, self.ae_hidden_outputs, self.train_ph)
+        self.autoencoder = sae(self.preprocessed, self.ae_hidden_layer_num, self.ae_hidden_outputs, self.train_ph, need_norm=True)
         self.decoded = self.autoencoder.model()
         self.loss, self.l2_distance = self.autoencoder.loss(get_l2_distance=True)
 
@@ -139,7 +139,7 @@ class trainer:
             # Complete the train.
             # May have the next round of training for the next layer of Stack AutoEncoder.
             self.reset_for_train()
-            print('The %d-th layer of the Stack AutoEncoder has been trained.' % i)
+            print('The %d-th layer of the Stack AutoEncoder has been trained.' % layer_idx)
             return None
 
         ops = [self.train_ops[layer_idx-1], self.loss, self.l2_distance]
@@ -150,7 +150,7 @@ class trainer:
             ops.append(self.train_merged)
             summary = True
         if global_step % self.layer_report_rate == 0:
-            ops.append(self.layers_out_merged)
+            ops.append(self.layers_out_mergeds[layer_idx-1])
             summary_for_layer = True
 
         r = self.sess.run(ops, feed_dict=feed_dict)
@@ -180,14 +180,14 @@ class trainer:
                 r = self.train_a_step(train_layer, global_step=step)
                 if r is None:
                     train_layer += 1
-                    self.batch_size //= 2
                     continue
 
-                train_loss, train_l2_distance = r
-                str_format = 'The step %8sth: loss = %6.4s, l2_distance = %6.4s'
-                print(str_format % (str(step), str(train_loss), str(train_l2_distance)))
+                if step % 10 == 0:
+                    train_loss, train_l2_distance = r
+                    str_format = 'The step %8s-th: loss = %6.4s, l2_distance = %6.4s'
+                    print(str_format % (step, train_loss, train_l2_distance))
 
-                if train_layer == self.ae_hidden_layer_num and global_step % self.save_rate == 0:
+                if train_layer == self.ae_hidden_layer_num and step % self.save_rate == 0:
                     self.saver.save(self.sess, self.model_fname, global_step=step)
 
                 step += 1
